@@ -281,7 +281,11 @@ def _optimize_desc_least_squares(
         "maxiter", "max_nfev", "max_njev", "max_ngev", "max_nhev"}
     options : dict, optional
         Dictionary of optional keyword arguments to override default solver
-        settings. See ``desc.optimize.lsqtr`` for details.
+        settings. See ``desc.optimize.lsqtr`` for details. ``"callback"``
+        accepts ``callback(xk) -> bool`` after each accepted step; True stops
+        with success=False. ``xk`` has the coordinates of ``objective.x``
+        (reduced coordinates for LinearConstraintProjection), not necessarily
+        the full parameters stored in the returned optimizer history.
 
     Returns
     -------
@@ -313,7 +317,7 @@ def _optimize_desc_least_squares(
         gtol=stoptol["gtol"],
         maxiter=stoptol["maxiter"],
         verbose=verbose,
-        callback=None,
+        callback=options.pop("callback", None),
         options=options,
     )
     return result

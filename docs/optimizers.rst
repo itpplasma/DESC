@@ -20,3 +20,31 @@ In addition to the listed optimizers, DESC also includes ``proximal-`` prefix to
    :widths: 15, 10, 10, 10, 10, 10, 10, 60
    :header-rows: 1
    :class: longtable
+
+Accepted-step callbacks for ``lsq-exact``
+=======================================
+
+Pass ``options={"callback": callback}`` to ``Optimizer.optimize`` or to
+``Equilibrium.solve`` with ``optimizer="lsq-exact"``. The callback is called
+as ``callback(xk)`` after each accepted step. Return ``False`` (or ``None``)
+to continue; return ``True`` to stop with ``success=False`` and a callback
+termination message. It is not called for the initial state, rejected trial
+steps, or a problem that terminates without an accepted step. Omitting the
+option, or setting it to ``None``, preserves the default solver behavior.
+
+``xk`` uses the coordinates of the objective passed to the native solver.
+With ``LinearConstraintProjection``, these are **reduced** coordinates;
+``Optimizer.optimize`` subsequently recovers full coordinates in the returned
+history. The callback does not update the original optimizable objects.
+For a full-state checkpoint, construct and build the projection explicitly
+before optimizing, then use its ``unpack_state(xk, per_objective=False)``
+method to recover parameter dictionaries for copies of its ``things``.
+Save those copies rather than mutating the objects being optimized. With
+``ProximalProjection``, the callback coordinates likewise belong to that
+wrapped objective and are not a full equilibrium state.
+
+A callback can save accepted states or request a graceful stop before an
+external wall limit. It cannot run while a function/Jacobian evaluation is
+in progress and therefore does not guarantee a checkpoint before an
+arbitrary hard process termination. A saved diagnostic state and callback
+termination do not establish equilibrium convergence.
