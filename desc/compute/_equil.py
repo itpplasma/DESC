@@ -825,7 +825,7 @@ def _Fmag_vol(params, transforms, profiles, data, **kwargs):
 
 @register_compute_fun(
     name="e^helical",
-    label="B^{\\theta} \\nabla \\zeta - B^{\\zeta} \\nabla \\theta",
+    label="B^{\\zeta} \\nabla \\theta - B^{\\theta} \\nabla \\zeta",
     units="T \\cdot m^{-2}",
     units_long="Tesla / square meter",
     description="Helical basis vector",
@@ -845,7 +845,7 @@ def _e_sup_helical(params, transforms, profiles, data, **kwargs):
 
 @register_compute_fun(
     name="e^helical*sqrt(g)",
-    label="\\sqrt{g}(B^{\\theta} \\nabla \\zeta - B^{\\zeta} \\nabla \\theta)",
+    label="\\sqrt{g}(B^{\\zeta} \\nabla \\theta - B^{\\theta} \\nabla \\zeta)",
     units="T \\cdot m^{2}",
     units_long="Tesla * square meter",
     description="Helical basis vector weighted by 3-D volume Jacobian",
@@ -866,7 +866,7 @@ def _e_sup_helical_times_sqrt_g(params, transforms, profiles, data, **kwargs):
 
 @register_compute_fun(
     name="|e^helical|",
-    label="|B^{\\theta} \\nabla \\zeta - B^{\\zeta} \\nabla \\theta|",
+    label="|B^{\\zeta} \\nabla \\theta - B^{\\theta} \\nabla \\zeta|",
     units="T \\cdot m^{-2}",
     units_long="Tesla / square meter",
     description="Magnitude of helical basis vector",
@@ -884,7 +884,7 @@ def _e_sup_helical_mag(params, transforms, profiles, data, **kwargs):
 
 @register_compute_fun(
     name="|e^helical*sqrt(g)|",
-    label="|\\sqrt{g}(B^{\\theta} \\nabla \\zeta - B^{\\zeta} \\nabla \\theta)|",
+    label="|\\sqrt{g}(B^{\\zeta} \\nabla \\theta - B^{\\theta} \\nabla \\zeta)|",
     units="T \\cdot m^{2}",
     units_long="Tesla * square meter",
     description="Magnitude of helical basis vector weighted by 3-D volume Jacobian",
