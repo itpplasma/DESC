@@ -1315,12 +1315,11 @@ class Equilibrium(IOAble, Optimizable):
         -------
         out : jnp.ndarray
             Shape (k, 3).
-            Coordinates mapped from ``inbasis`` to ``outbasis``. Root finding is
-            not guaranteed to succeed for all inputs: unconverged points are
-            returned as computed, and points outside the plasma volume are clipped
-            to rho=1 during the solve, returning finite boundary coordinates
-            rather than NaN. To detect failed inversions, pass
-            ``full_output=True`` and mask points whose residual exceeds ``tol``.
+            Coordinates mapped from ``inbasis`` to ``outbasis``. If the inversion fails
+            to converge, the output is still evaluated at the final solver iterate;
+            failed results are not automatically replaced with NaN. Use
+            ``full_output=True`` to obtain the residual for each point and reject
+            results with a non-finite residual or a residual greater than ``tol``.
         info : tuple
             2 element tuple containing residuals and number of iterations
             for each point. Only returned if ``full_output`` is True.
