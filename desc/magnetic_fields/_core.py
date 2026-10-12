@@ -1836,18 +1836,18 @@ class SplineMagneticField(_MagneticField, Optimizable):
         tempdict["fz"] = approx_df(self._Z, Bi, self._method, 2)
         tempdict["fxz"] = approx_df(self._Z, tempdict["fx"], self._method, 2)
         if self._axisym:
-            tempdict["fy"] = jnp.zeros_like(tempdict["fx"])
-            tempdict["fxy"] = jnp.zeros_like(tempdict["fx"])
-            tempdict["fyz"] = jnp.zeros_like(tempdict["fx"])
-            tempdict["fxyz"] = jnp.zeros_like(tempdict["fx"])
-        else:
-            tempdict["fy"] = approx_df(self._phi, Bi, self._method, 1)
-            tempdict["fxy"] = approx_df(self._phi, tempdict["fx"], self._method, 1)
-            tempdict["fyz"] = approx_df(self._Z, tempdict["fy"], self._method, 2)
-            tempdict["fxyz"] = approx_df(self._Z, tempdict["fxy"], self._method, 2)
-        if self._axisym:
-            for key, val in tempdict.items():
-                tempdict[key] = val[:, 0, :]
+            # single phi plane: evaluated with interp2d(R, Z), whose second
+            # coordinate "y" is Z, so its derivative kwargs are fx, fy=df/dZ
+            # and fxy=d2f/dRdZ.
+            return {
+                "fx": tempdict["fx"][:, 0, :],
+                "fy": tempdict["fz"][:, 0, :],
+                "fxy": tempdict["fxz"][:, 0, :],
+            }
+        tempdict["fy"] = approx_df(self._phi, Bi, self._method, 1)
+        tempdict["fxy"] = approx_df(self._phi, tempdict["fx"], self._method, 1)
+        tempdict["fyz"] = approx_df(self._Z, tempdict["fy"], self._method, 2)
+        tempdict["fxyz"] = approx_df(self._Z, tempdict["fxy"], self._method, 2)
         return tempdict
 
     def _compute_A_or_B(
