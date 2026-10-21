@@ -2,7 +2,7 @@ name: Weekly tests
 
 on:
   schedule:
-      - cron: '17 9 * * 1'
+    - cron: '17 9 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -11,10 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        combos: [{group: 1, python_version: '3.10'},
-                 {group: 2, python_version: '3.11'},
-                 {group: 3, python_version: '3.12'},
-                 {group: 4, python_version: '3.13'}]
+        combos: [{group: 1, python_version: '3.10'}, {group: 2, python_version: '3.11'}, {group: 3, python_version: '3.12'}, {group: 4, python_version: '3.13'}]
 
     steps:
       - uses: actions/checkout@v7
@@ -41,3 +38,5 @@ jobs:
             --splits 4 \
             --group ${{ matrix.combos.group }} \
             --splitting-algorithm least_duration
+    if: >-
+      github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.actor != 'github-merge-queue[bot]') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event_name == 'schedule'
