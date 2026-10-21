@@ -2,12 +2,16 @@ name: Linting
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
   workflow_dispatch:
   merge_group:
   push:
     branches:
       - main
-
 jobs:
   flake8_linting:
     runs-on: ubuntu-latest

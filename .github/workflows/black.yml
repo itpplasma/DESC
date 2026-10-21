@@ -2,12 +2,16 @@ name: Black formatting
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
   workflow_dispatch:
   merge_group:
   push:
     branches:
       - main
-
 jobs:
   black_format:
 
