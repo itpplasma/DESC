@@ -22,6 +22,7 @@ Breaking Changes and Deprecations
 
 Bug Fixes
 
+- Checks changelog updates on merge groups and direct pushes using the event commit range.
 - Fixes bug in ``auglag`` optimizers which prevented them from accepting solver hyperparameters.
 - Fixes computation of ``CoilSetLinkingNumber`` to exclude coil writhe.
 - Adjusts the `quad_weights` of coil objectives of type `_broadcast_input = "node"` to ensure their outputs are roughly independent of grid resolution.
