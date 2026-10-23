@@ -161,6 +161,10 @@ class Optimizer(IOAble):
               ``ProximalProjection`` as its ``perturb_options``.
             - ``"solve_options"`` : Dictionary of keyword arguments to pass to
               ``ProximalProjection`` as its ``solve_options``.
+            - ``"eq_constraints"`` : Tuple of additional linear constraints on the
+              equilibrium to pass to ``ProximalProjection`` as its ``eq_constraints``.
+            - ``"eq_response"`` : ``"gauss-newton"`` or ``"newton"``, passed to
+              ``ProximalProjection`` as its ``eq_response``.
 
             - ``"ess_alpha"`` : float, optional
               Decay rate of the scaling. Default is 1.2.
@@ -601,12 +605,16 @@ def _maybe_wrap_nonlinear_constraints(
     if wrapper is not None and wrapper.lower() in ["prox", "proximal"]:
         perturb_options = options.pop("perturb_options", {})
         solve_options = options.pop("solve_options", {})
+        eq_constraints = options.pop("eq_constraints", None)
+        eq_response = options.pop("eq_response", "gauss-newton")
         objective = ProximalProjection(
             objective,
             constraint=_combine_constraints(nonlinear_constraints),
             perturb_options=perturb_options,
             solve_options=solve_options,
             eq=eq,
+            eq_constraints=eq_constraints,
+            eq_response=eq_response,
         )
         nonlinear_constraints = ()
     return objective, nonlinear_constraints
