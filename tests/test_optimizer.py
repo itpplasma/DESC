@@ -44,6 +44,7 @@ from desc.objectives import (
     FixCurveRotation,
     FixCurveShift,
     FixIota,
+    FixModeLambda,
     FixParameters,
     FixPressure,
     FixPsi,
@@ -56,6 +57,7 @@ from desc.objectives import (
     PlasmaVesselDistance,
     QuadraticFlux,
     QuasisymmetryTripleProduct,
+    RotationalTransform,
     Volume,
     get_fixed_boundary_constraints,
     maybe_add_self_consistency,
@@ -1366,34 +1368,29 @@ def test_proximal_jacobian():
     # this is basically the old method we're benchmarking against
     xf = con1.x(eq1)
     xg = obj1.x(eq1)
-    # for scaled jacobian
-    Fx = con1.jac_scaled(xf)
-    Gx = obj1.jac_scaled(xg)
+    # the equilibrium response dx/dc is the least-squares sensitivity of the solve,
+    # which minimizes the scaled force error, for both scaled and unscaled jacobians
+    Fx = con1.jac_scaled_error(xf)
     eq_unfixed_idx = prox1._eq_solve_objective._unfixed_idx
     eq_Z = prox1._eq_solve_objective._Z
     Fxh = Fx[:, eq_unfixed_idx] @ eq_Z
-    Gxh = Gx[:, eq_unfixed_idx] @ eq_Z
     Fc = Fx @ prox1._dxdc
-    Gc = Gx @ prox1._dxdc
     cutoff = np.finfo(Fxh.dtype).eps * np.max(Fxh.shape)
     uf, sf, vtf = jnp.linalg.svd(Fxh, full_matrices=False)
     sf += sf[-1]  # add a tiny bit of regularization
     sfi = np.where(sf < cutoff * sf[0], 0, 1 / sf)
     Fxh_inv = vtf.T @ (sfi[..., np.newaxis] * uf.T)
-    jac_scaled = -Gxh @ (Fxh_inv @ Fc) + Gc
+    dxhdc = Fxh_inv @ Fc
+    # for scaled jacobian
+    Gx = obj1.jac_scaled(xg)
+    Gxh = Gx[:, eq_unfixed_idx] @ eq_Z
+    Gc = Gx @ prox1._dxdc
+    jac_scaled = -Gxh @ dxhdc + Gc
     # for unscaled jacobian
-    Fx = con1.jac_unscaled(xf)
     Gx = obj1.jac_unscaled(xg)
-    Fxh = Fx[:, eq_unfixed_idx] @ eq_Z
     Gxh = Gx[:, eq_unfixed_idx] @ eq_Z
-    Fc = Fx @ prox1._dxdc
     Gc = Gx @ prox1._dxdc
-    cutoff = np.finfo(Fxh.dtype).eps * np.max(Fxh.shape)
-    uf, sf, vtf = jnp.linalg.svd(Fxh, full_matrices=False)
-    sf += sf[-1]  # add a tiny bit of regularization
-    sfi = np.where(sf < cutoff * sf[0], 0, 1 / sf)
-    Fxh_inv = vtf.T @ (sfi[..., np.newaxis] * uf.T)
-    jac_unscaled = -Gxh @ (Fxh_inv @ Fc) + Gc
+    jac_unscaled = -Gxh @ dxhdc + Gc
 
     jvp0 = jac_scaled @ v
     jvp1 = prox1.jvp_scaled(v, x)
@@ -1428,6 +1425,193 @@ def test_proximal_jacobian():
     np.testing.assert_allclose(jac_unscaled, jac1, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(jac_unscaled, jac2, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(jac_unscaled, jac3, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.unit
+def test_proximal_jacobian_op_independent_equilibrium_response():
+    """Test that scaled and unscaled jacobians share the equilibrium response dx/dc.
+
+    The inner solve minimizes the scaled force error, so dx/dc must not depend on
+    whether the objective is differentiated scaled or unscaled. At finite resolution
+    the force residual is nonzero and the two metrics give different dx/dc.
+    """
+    eq = desc.examples.get("HELIOTRON")
+    with pytest.warns(UserWarning, match="Reducing radial"):
+        eq.change_resolution(2, 2, 1, 4, 4, 2)
+    weight = 3.0
+    obj = ObjectiveFunction(Volume(eq, weight=weight, normalize=False), use_jit=False)
+    con = ObjectiveFunction(ForceBalance(eq), use_jit=False)
+    prox = ProximalProjection(obj, con, eq, solve_options={"maxiter": 1})
+    prox.build(verbose=0)
+    x = prox.x(eq)
+    # the residual of this coarse equilibrium is far from zero
+    assert con.compute_scalar(con.x(eq)) > 1e-6
+    J = weight * prox.jac_unscaled(x)
+    np.testing.assert_allclose(
+        prox.jac_scaled(x), J, rtol=1e-7, atol=1e-10 * np.abs(J).max()
+    )
+
+
+def _lambda_gauge_modes(eq):
+    """Lambda modes except the one with the highest radial index of each (m, n)."""
+    modes = eq.L_basis.modes
+    fixed = np.ones(modes.shape[0], dtype=bool)
+    for m, n in {(m, n) for _, m, n in modes}:
+        idx = np.where((modes[:, 1] == m) & (modes[:, 2] == n))[0]
+        fixed[idx[np.argmax(modes[idx, 0])]] = False
+    return modes[fixed]
+
+
+@pytest.mark.unit
+@pytest.mark.slow
+@pytest.mark.filterwarnings("ignore:Current on axis is nonzero")
+def test_proximal_eq_constraints_lambda_gauge():
+    """Test a lambda gauge pin passed as extra equilibrium constraint of proximal.
+
+    Fixing all lambda modes except the highest radial one of each (m, n) removes the
+    near-null poloidal angle gauge directions from the inner solve. The pin is taken
+    at a solved equilibrium, which it leaves unchanged.
+    """
+    eq = desc.examples.get("precise_QA")
+    with pytest.warns(UserWarning, match="Reducing radial"):
+        eq.change_resolution(4, 4, 2, 8, 8, 4)
+    solve_options = {"ftol": 1e-12, "xtol": 1e-14, "gtol": 1e-14, "verbose": 0}
+    eq.solve(maxiter=2000, **solve_options)
+    eq_free = eq.copy()
+
+    modes = _lambda_gauge_modes(eq)
+    idx = np.array([eq.L_basis.get_idx(*mode) for mode in modes])
+    L_pinned = eq.L_lmn[idx].copy()
+    grid = LinearGrid(
+        rho=np.linspace(0.3, 1.0, 4), M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP
+    )
+    obj = ObjectiveFunction(RotationalTransform(eq, grid=grid))
+    con = ObjectiveFunction(ForceBalance(eq))
+    with pytest.raises(ValueError, match="may only act on"):
+        ProximalProjection(
+            obj, con, eq, eq_constraints=(FixBoundaryR(eq, modes=[0, 0, 0]),)
+        ).build(verbose=0)
+    prox = ProximalProjection(
+        obj,
+        con,
+        eq,
+        perturb_options={"order": 2},
+        solve_options={**solve_options, "maxiter": 200},
+        eq_constraints=(FixModeLambda(eq, modes=modes),),
+    )
+    prox.build(verbose=0)
+    assert any(
+        isinstance(c, FixModeLambda)
+        for c in prox._eq_solve_objective._constraint.objectives
+    )
+
+    # the gauge-fixed inner solve converges natively with the original tolerances
+    _, result = eq.solve(
+        objective=prox._eq_solve_objective,
+        constraints=None,
+        maxiter=200,
+        **solve_options,
+    )
+    assert result["success"], result["message"]
+    np.testing.assert_array_equal(eq.L_lmn[idx], L_pinned)
+    # and keeps the gauge-invariant quantities of the free-gauge solution
+    rho = np.linspace(0.1, 1.0, 10)
+    pgrid = LinearGrid(rho=rho, M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP)
+    keys = ["iota", "V", "R0/a", "<|B|>_vol"]
+    pinned = eq.compute(keys, grid=pgrid)
+    free = eq_free.compute(keys, grid=pgrid)
+    for key in keys:
+        np.testing.assert_allclose(pinned[key], free[key], rtol=1e-8, err_msg=key)
+
+    # the derivative uses the pinned feasible directions, so the pinned lambda
+    # modes do not respond to the boundary
+    tangents = np.asarray(prox._eq_solve_objective._feasible_tangents)
+    np.testing.assert_array_equal(tangents[eq.x_idx["L_lmn"][idx]], 0)
+    x = prox.x(eq)
+    rng = np.random.default_rng(0)
+    nb = eq.dimensions["Rb_lmn"] + eq.dimensions["Zb_lmn"]
+    d = np.zeros_like(x)
+    d[:nb] = rng.standard_normal(nb) * np.abs(x[:nb]).max() * 1e-2
+    g = np.asarray(prox.jvp_unscaled(d, x))
+    h = 1e-4
+    fd = (
+        np.asarray(prox.compute_unscaled(x + h * d))
+        - np.asarray(prox.compute_unscaled(x - h * d))
+    ) / (2 * h)
+    # the default response is the regularized Gauss-Newton one of the pinned solve
+    xf = con.x(eq)
+    tc = np.asarray(prox._dxdc @ d)
+    Fx = np.asarray(con.jac_scaled_error(xf))
+    Gx = np.asarray(obj.jac_unscaled(obj.x(eq)))
+    uf, sf, vtf = np.linalg.svd(Fx @ tangents, full_matrices=False)
+    dy = -vtf.T @ ((uf.T @ (Fx @ tc)) / (sf + sf[-1]))
+    g_gn = Gx @ (tc + tangents @ dy)
+    np.testing.assert_allclose(g, g_gn, rtol=1e-7, atol=1e-10 * np.abs(g_gn).max())
+    # eq_response="newton" gives the exact least-squares response, which includes
+    # the second order residual terms that Gauss-Newton neglects, checked against
+    # a dense Hessian and against central differences of re-solved equilibria
+    prox_newton = ProximalProjection(
+        obj,
+        con,
+        eq,
+        perturb_options={"order": 2},
+        solve_options={**solve_options, "maxiter": 200},
+        eq_constraints=(FixModeLambda(eq, modes=modes),),
+        eq_response="newton",
+    )
+    prox_newton.build(verbose=0)
+    g_newton = np.asarray(prox_newton.jvp_unscaled(d, x))
+    H = np.asarray(con.hess(xf))
+    dy = -np.linalg.solve(tangents.T @ H @ tangents, tangents.T @ H @ tc)
+    np.testing.assert_allclose(
+        g_newton,
+        Gx @ (tc + tangents @ dy),
+        rtol=1e-6,
+        atol=1e-9 * np.abs(g_newton).max(),
+    )
+    np.testing.assert_allclose(
+        prox_newton.jac_unscaled(x) @ d, g_newton, rtol=1e-8, atol=1e-12
+    )
+    assert np.linalg.norm(fd - g_newton) < 1e-4 * np.linalg.norm(fd)
+    # whereas Gauss-Newton misses the response along the weakest directions
+    assert np.linalg.norm(fd - g) > 1e-1 * np.linalg.norm(fd)
+
+    # the pinned inner solve also converges natively after a boundary perturbation
+    deltas = {
+        "Rb_lmn": 1e-2 * d[: eq.dimensions["Rb_lmn"]],
+        "Zb_lmn": 1e-2 * d[eq.dimensions["Rb_lmn"] : nb],
+    }
+    eq.perturb(
+        objective=prox._eq_solve_objective,
+        constraints=None,
+        deltas=deltas,
+        order=2,
+        verbose=0,
+        copy=False,
+    )
+    _, result = eq.solve(
+        objective=prox._eq_solve_objective,
+        constraints=None,
+        maxiter=200,
+        **solve_options,
+    )
+    assert result["success"], result["message"]
+    np.testing.assert_array_equal(eq.L_lmn[idx], L_pinned)
+    # and differs from the free-gauge solve of the same boundary in the gauge
+    # invariant quantities by much less than the truncation error, estimated by a
+    # free-gauge solve at higher resolution
+    eq_free.perturb(deltas=deltas, order=2, verbose=0, copy=False)
+    eq_free.solve(maxiter=2000, **solve_options)
+    eq_fine = eq_free.copy()
+    eq_fine.change_resolution(6, 6, 3, 12, 12, 6)
+    eq_fine.solve(maxiter=2000, **solve_options)
+    pinned = eq.compute(keys, grid=pgrid)
+    free = eq_free.compute(keys, grid=pgrid)
+    fine = eq_fine.compute(keys, grid=pgrid)
+    for key in keys:
+        gauge_diff = np.max(np.abs(pinned[key] - free[key]))
+        truncation = np.max(np.abs(fine[key] - free[key]))
+        assert gauge_diff <= 0.25 * truncation + 1e-10 * np.max(np.abs(free[key])), key
 
 
 @pytest.mark.slow

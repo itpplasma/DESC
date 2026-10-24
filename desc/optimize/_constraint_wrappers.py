@@ -4,7 +4,8 @@ import functools
 
 import numpy as np
 
-from desc.backend import jit, jnp, put
+from desc.backend import jax, jit, jnp, put
+from desc.batching import vmap_chunked
 from desc.objectives import (
     BoundaryRSelfConsistency,
     BoundaryZSelfConsistency,
@@ -18,7 +19,7 @@ from desc.objectives.utils import (
     factorize_linear_constraints,
     remove_fixed_parameters,
 )
-from desc.utils import Timer, errorif, get_instance, setdefault, warnif
+from desc.utils import Timer, errorif, get_instance, isposint, setdefault, warnif
 
 from .utils import f_where_x
 
@@ -573,6 +574,24 @@ class ProximalProjection(ObjectiveFunction):
         during the projection step.
     name : str
         Name of the objective function.
+    eq_constraints : tuple of _Objective, optional
+        Additional linear equality constraints on the equilibrium that are enforced
+        in the equilibrium sub-problem, together with the fixed-boundary constraints.
+        They may only act on the internal equilibrium degrees of freedom
+        (R_lmn, Z_lmn, L_lmn, Ra_n, Za_n), not on the optimization variables. A
+        typical use is ``FixModeLambda`` on a subset of the lambda modes to fix the
+        poloidal angle gauge of the inner solve. Their targets are taken from the
+        equilibrium and follow it whenever the equilibrium is updated.
+    eq_response : {"gauss-newton", "newton"}
+        How the response dx/dc of the equilibrium to the optimization variables is
+        computed for the derivatives. ``"gauss-newton"`` (default) uses the
+        regularized Gauss-Newton pseudoinverse of dF/dx, which neglects the second
+        order terms of a nonzero force residual. ``"newton"`` differentiates the
+        stationarity condition of the least-squares equilibrium solve with the full
+        Hessian of the scaled force error, which is the exact response of the
+        re-solved equilibrium at finite resolution. It costs one Hessian-vector
+        product instead of one Jacobian-vector product per internal and per
+        optimization degree of freedom.
     """
 
     def __init__(
@@ -583,6 +602,8 @@ class ProximalProjection(ObjectiveFunction):
         perturb_options=None,
         solve_options=None,
         name="ProximalProjection",
+        eq_constraints=None,
+        eq_response="gauss-newton",
     ):
         assert isinstance(objective, ObjectiveFunction), (
             "objective should be instance of ObjectiveFunction." ""
@@ -605,6 +626,35 @@ class ProximalProjection(ObjectiveFunction):
                 "ProximalProjection can only handle equality constraints, "
                 + f"got bounds for constraint {con}",
             )
+        eq_constraints = () if eq_constraints is None else eq_constraints
+        if not isinstance(eq_constraints, (tuple, list)):
+            eq_constraints = (eq_constraints,)
+        for con in eq_constraints:
+            errorif(
+                not con.linear,
+                ValueError,
+                f"eq_constraints of ProximalProjection must be linear, got {con}.",
+            )
+            errorif(
+                con.bounds is not None,
+                ValueError,
+                "eq_constraints of ProximalProjection must be equality constraints, "
+                + f"got bounds for {con}.",
+            )
+            errorif(
+                con.things != [eq],
+                ValueError,
+                "eq_constraints of ProximalProjection can only constrain the "
+                + f"equilibrium, got {con}.",
+            )
+        self._eq_constraints = tuple(eq_constraints)
+        errorif(
+            eq_response not in ("gauss-newton", "newton"),
+            ValueError,
+            "eq_response of ProximalProjection must be 'gauss-newton' or 'newton', "
+            + f"got {eq_response}.",
+        )
+        self._eq_response = eq_response
         self._objective = objective
         self._constraint = constraint
         solve_options = {} if solve_options is None else solve_options
@@ -690,7 +740,9 @@ class ProximalProjection(ObjectiveFunction):
         timer = Timer()
         timer.start("Proximal projection build")
 
-        self._eq_linear_constraints = get_fixed_boundary_constraints(eq=self._eq)
+        self._eq_linear_constraints = (
+            tuple(get_fixed_boundary_constraints(eq=self._eq)) + self._eq_constraints
+        )
         self._eq_linear_constraints = maybe_add_self_consistency(
             self._eq, self._eq_linear_constraints
         )
@@ -705,6 +757,25 @@ class ProximalProjection(ObjectiveFunction):
 
         for constraint in self._eq_linear_constraints:
             constraint.build(use_jit=use_jit, verbose=verbose)
+
+        # the extra constraints must leave the optimization variables free, otherwise
+        # the inner solve and the derivative dx/dc would disagree with the optimizer
+        xz = {arg: np.zeros(self._eq.dimensions[arg]) for arg in self._eq.params_dict}
+        outer_args = set(self._eq.optimizable_params) - {
+            "R_lmn",
+            "Z_lmn",
+            "L_lmn",
+            "Ra_n",
+            "Za_n",
+        }
+        for con in self._eq_constraints:
+            jac = con.jac_unscaled(xz)[0]
+            errorif(
+                any(np.any(jac[arg]) for arg in outer_args if arg in jac),
+                ValueError,
+                "eq_constraints of ProximalProjection may only act on R_lmn, Z_lmn, "
+                + f"L_lmn, Ra_n and Za_n, but {con} also constrains other parameters.",
+            )
 
         # Here we create and build the LinearConstraintProjection
         # for the equilibrium subproblem using the self._constraint as objective
@@ -1053,7 +1124,7 @@ class ProximalProjection(ObjectiveFunction):
             self._dxdc,
             self._dimc_per_thing,
             self._eq_idx,
-            "scaled_error",
+            self._eq_response,
         )
         g = self._objective.compute_scaled_error(xg, constants[0])
         g_vjp = self._objective.vjp_scaled_error(g, xg, constants[0])
@@ -1219,7 +1290,7 @@ class ProximalProjection(ObjectiveFunction):
             self._dxdc,
             self._dimc_per_thing,
             self._eq_idx,
-            op,
+            self._eq_response,
         )
 
         if self._objective._deriv_mode == "batched":
@@ -1276,7 +1347,7 @@ def jit_if_possible(func=None, *, static_argnames=("op",)):
     return wrapper
 
 
-@jit_if_possible(static_argnames=("dimc_per_thing", "eq_idx", "op"))
+@jit_if_possible(static_argnames=("dimc_per_thing", "eq_idx", "response"))
 def _proximal_get_tangents(
     constraint,
     xf,
@@ -1286,7 +1357,7 @@ def _proximal_get_tangents(
     dxdc,
     dimc_per_thing,
     eq_idx,
-    op="scaled_error",
+    response="gauss-newton",
 ):
     # We try to find dG/dc - dG/dx * (dF/dx)⁻¹ * dF/dc
     # where G is the objective function. Since DESC stores x and c in the same
@@ -1309,21 +1380,26 @@ def _proximal_get_tangents(
     # only pays off with a lot of coil, surface etc DoFs, ie. single stage.
     if vs[eq_idx].ndim == 2 and vs[eq_idx].shape[0] > dimc_per_thing[eq_idx]:
         eq_tangents = vs[eq_idx] @ _proximal_eq_tangents(
-            constraint, xf, constants, eq_feasible_tangents, dxdc.T, op
+            constraint, xf, constants, eq_feasible_tangents, dxdc.T, response
         )
     else:
         dxdcv = vs[eq_idx] @ dxdc.T
         # atleast_2d and reshape are to also handle a single (1D) direction
         eq_tangents = _proximal_eq_tangents(
-            constraint, xf, constants, eq_feasible_tangents, jnp.atleast_2d(dxdcv), op
+            constraint,
+            xf,
+            constants,
+            eq_feasible_tangents,
+            jnp.atleast_2d(dxdcv),
+            response,
         )
         eq_tangents = eq_tangents.reshape(dxdcv.shape)
     return jnp.concatenate([*vs[:eq_idx], eq_tangents, *vs[eq_idx + 1 :]], axis=-1)
 
 
-@jit_if_possible
+@jit_if_possible(static_argnames=("response",))
 def _proximal_eq_tangents(
-    constraint, xf, constants, eq_feasible_tangents, dxdcv, op="scaled_error"
+    constraint, xf, constants, eq_feasible_tangents, dxdcv, response="gauss-newton"
 ):
     # Note: dxdcv holds the directions in c, mapped to the full eq state vector, as
     # rows. It is either dxdc.T or v @ dxdc.T, the return has the same shape.
@@ -1337,9 +1413,36 @@ def _proximal_eq_tangents(
     # For example, if we want the derivative wrt Rb_023, we should take the derivative
     # wrt all R_lmn coefficients that contribute to Rb_023. See BoundaryRSelfConsistency
     # for the relation between Rb_lmn and R_lmn.
+    # The equilibrium solve minimizes the norm of the scaled error of the constraint,
+    # so dx/dc is the least-squares sensitivity in that metric, whatever op the
+    # objective is differentiated with. For a nonzero force residual (finite
+    # resolution) the unscaled metric gives a different, inconsistent dx/dc.
     dim_x_reduced = eq_feasible_tangents.shape[-1]
     tangents = jnp.concatenate([eq_feasible_tangents.T, dxdcv], axis=0)
-    J = getattr(constraint, "jvp_" + op)(tangents, xf, constants)
+    if response == "newton":
+        # The solve gives a stationary point of f = 0.5 |F|^2 in the feasible
+        # directions, Tᵀ ∇f(xp(c) + T y) = 0. Differentiating this condition gives
+        # (Tᵀ H T) dy = -Tᵀ H dx_c with the full Hessian H of f, which, unlike the
+        # Gauss-Newton Fxᵀ Fx, keeps the second order terms of a nonzero residual.
+        def hvp(t):
+            return jax.jvp(lambda z: constraint.grad(z, constants), (xf,), (t,))[1]
+
+        # same chunking as the Jacobian of the constraint
+        chunk_sizes = [constraint._jac_chunk_size] + [
+            obj._jac_chunk_size for obj in constraint.objectives
+        ]
+        chunk_sizes = [c for c in chunk_sizes if isposint(c)]
+        chunk_size = min(chunk_sizes) if chunk_sizes else None
+        HT = vmap_chunked(hvp, chunk_size=chunk_size)(tangents)
+        HT = HT @ eq_feasible_tangents
+        A, b = HT[:dim_x_reduced], HT[dim_x_reduced:].T
+        A = (A + A.T) / 2
+        w, V = jnp.linalg.eigh(A)
+        cutoff = jnp.finfo(A.dtype).eps * A.shape[0] * jnp.abs(w).max()
+        wi = jnp.where(jnp.abs(w) < cutoff, 0, 1 / w)
+        dfdc = V @ (wi[:, None] * (V.T @ b))
+        return dxdcv - (eq_feasible_tangents @ dfdc).T
+    J = constraint.jvp_scaled_error(tangents, xf, constants)
     Fxh, Fc = J[:dim_x_reduced].T, J[dim_x_reduced:].T
     cutoff = jnp.finfo(Fxh.dtype).eps * max(Fxh.shape)
     uf, sf, vtf = jnp.linalg.svd(Fxh, full_matrices=False)

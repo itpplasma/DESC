@@ -3,6 +3,8 @@ Changelog
 
 New Features
 
+- Adds the ``eq_constraints`` argument to ``ProximalProjection`` (and the ``"eq_constraints"`` option of ``Optimizer`` for ``proximal-`` methods), which passes additional linear constraints on the internal equilibrium degrees of freedom, such as ``FixModeLambda`` to fix the poloidal angle gauge, to the equilibrium sub-problem.
+- Adds the ``eq_response`` argument to ``ProximalProjection`` (and the ``"eq_response"`` option of ``Optimizer`` for ``proximal-`` methods). ``"newton"`` computes the response of the equilibrium to the optimization variables from the full Hessian of the scaled force error, which is the exact response of the re-solved equilibrium when the force residual is nonzero at finite resolution, whereas the default ``"gauss-newton"`` neglects the second order residual terms and regularizes the weakest directions.
 - Added warning for when ``deriv_mode="batched"`` is used in an ``ObjectiveFunction`` where one or more sub-objectives is using ``rev`` mode differentiation. Also adds more info about the derivative mode and Jacobian chunk sizes when building the objective with ``verbose>1``.
 - Adds ``scale_invariant`` argument to quasi-symmetry objectives (i.e. ``QuasisymmetryTwoTerm``, ``QuasisymmetryTripleProduct`` and ``QuasisymmetryBoozer``) that introduces the normalized alternatives for the objective functions with the actual evaluated local magnetic field information instead of the precomputed constant normalization. Similarly, the definition of `f_C` and `f_T` of `plot_qs_error` is changed, the flux surface average is now take over the normalized quantity whereas previously the flux surface average was applied to each term separately before normalization. For more details on these quantities, see [Basic Optimization tutorial](https://desc-docs.readthedocs.io/en/latest/notebooks/tutorials/basic_optimization.html).
 
@@ -23,6 +25,7 @@ Breaking Changes and Deprecations
 Bug Fixes
 
 - Checks changelog updates on merge groups and direct pushes using the event commit range.
+- ``ProximalProjection`` now computes the equilibrium response to the optimization variables in the scaled force-error metric that the equilibrium solve minimizes, also for ``jac_unscaled`` and ``jvp_unscaled``. Previously the unscaled derivatives used the unscaled force metric, which gives a different response whenever the force residual is nonzero.
 - Fixes bug in ``auglag`` optimizers which prevented them from accepting solver hyperparameters.
 - Fixes computation of ``CoilSetLinkingNumber`` to exclude coil writhe.
 - Adjusts the `quad_weights` of coil objectives of type `_broadcast_input = "node"` to ensure their outputs are roughly independent of grid resolution.
