@@ -73,6 +73,14 @@ def main(cl_args=sys.argv[1:]):
             checkpoint_path=ir.output_path,
         )
 
+    if ir.free_boundary:
+        equil_fam.append(
+            _solve_free_boundary(
+                equil_fam[-1], ir.free_boundary, ir.input_path, ir.args.verbose
+            )
+        )
+        equil_fam.save(ir.output_path)
+
     if ir.args.plot > 1:
         for i, eq in enumerate(equil_fam[:-1]):
             print("Plotting solution at step {}".format(i + 1))
@@ -86,6 +94,44 @@ def main(cl_args=sys.argv[1:]):
         plt.show()
         _ = plot_section(equil_fam[-1], "|F|_normalized", log=True)
         plt.show()
+
+
+def _solve_free_boundary(eq, free_boundary, input_path, verbose):
+    """Solve the free-boundary problem of a VMEC input in its mgrid field.
+
+    Starts from the fixed-boundary solution and moves the boundary until the
+    plasma and vacuum pressures balance on it, with profiles and flux fixed.
+    """
+    import os
+
+    from desc.magnetic_fields import SplineMagneticField
+    from desc.objectives import (
+        BoundaryError,
+        FixBoundaryR,
+        FixBoundaryZ,
+        ForceBalance,
+        ObjectiveFunction,
+        get_fixed_boundary_constraints,
+    )
+
+    mgrid = free_boundary["mgrid_file"]
+    if not os.path.isabs(mgrid):
+        mgrid = os.path.join(os.path.dirname(os.path.abspath(input_path)), mgrid)
+    field = SplineMagneticField.from_mgrid(mgrid, extcur=free_boundary.get("extcur"))
+    constraints = (ForceBalance(eq=eq),) + tuple(
+        con
+        for con in get_fixed_boundary_constraints(eq)
+        if not isinstance(con, (FixBoundaryR, FixBoundaryZ))
+    )
+    objective = ObjectiveFunction(BoundaryError(eq=eq, field=field, field_fixed=True))
+    eq, _ = eq.optimize(
+        objective,
+        constraints,
+        optimizer="proximal-lsq-exact",
+        verbose=verbose,
+        copy=True,
+    )
+    return eq
 
 
 if __name__ == "__main__":  # pragma: no cover
