@@ -64,6 +64,7 @@ class InputReader:
         self._input_path = None
         self._output_path = None
         self._save_converted_vmec_input = save_converted_vmec_input
+        self.free_boundary = {}
 
         if cl_args is not None:
             if isinstance(cl_args, os.PathLike):
@@ -432,6 +433,14 @@ class InputReader:
             )
             if match:
                 splines[match.group(1).lower()] = numbers.astype(float)
+                flag = True
+            match = re.search(r"mgrid_file", argument, re.IGNORECASE)
+            if match:
+                self.free_boundary["mgrid_file"] = words[0]
+                flag = True
+            match = re.search(r"extcur", argument, re.IGNORECASE)
+            if match:
+                self.free_boundary["extcur"] = [float(x) for x in numbers]
                 flag = True
 
             # coefficient indices
@@ -821,6 +830,13 @@ class InputReader:
                     )
                 )
 
+        if inputs[-1].get("mgrid_file"):
+            f.write("\n# free-boundary external field\n")
+            f.write("mgrid_file = {}\n".format(inputs[-1]["mgrid_file"]))
+            f.write(
+                "extcur = {}\n".format(", ".join(str(c) for c in inputs[-1]["extcur"]))
+            )
+
         f.write("\n# pressure and rotational transform/current profiles\n")
         if "iota" in inputs[-1].keys():
             char = "i"
@@ -1104,6 +1120,9 @@ class InputReader:
         iota_flag = True
         pres_scale = 1.0
         curr_tor = None
+        lfreeb = None
+        mgrid_file = ""
+        extcur = []
         profile_data = {}
         spres_ped = 1.0
 
@@ -1184,13 +1203,26 @@ class InputReader:
             comment = line.find("!")
             command = (line.strip() + " ")[0:comment]
             # global parameters
-            if re.search(r"LFREEB\s*=\s*T", command, re.IGNORECASE):
-                warnings.warn(
-                    colored(
-                        "Using free-boundary mode! DESC will run as fixed-boundary.",
-                        "yellow",
-                    )
-                )
+            match = re.search(r"LFREEB\s*=\s*\.?([TF])", command, re.IGNORECASE)
+            if match:
+                lfreeb = match.group(1).upper() == "T"
+            match = re.search(
+                r"MGRID_FILE\s*=\s*['\"]([^'\"]*)['\"]", command, re.IGNORECASE
+            )
+            if match:
+                mgrid_file = match.group(1).strip()
+            match = re.search(
+                r"EXTCUR\s*(?:\(\s*(\d+)\s*\))?\s*=(.*)", command, re.IGNORECASE
+            )
+            if match:
+                start = int(match.group(1)) - 1 if match.group(1) else 0
+                values = [
+                    float(x)
+                    for x in re.findall(num_form, match.group(2))
+                    if re.search(r"\d", x)
+                ]
+                extcur += [0.0] * max(0, start + len(values) - len(extcur))
+                extcur[start : start + len(values)] = values
             if re.search(r"LRFP\s*=\s*T", command, re.IGNORECASE):
                 warnings.warn(
                     colored(
@@ -1738,6 +1770,19 @@ class InputReader:
                     else 0.0
                 )
                 inputs["spline"]["current"] = signgs * scale * current
+
+        # VMEC defaults LFREEB to true and runs free-boundary whenever a grid is named
+        if lfreeb is not False and mgrid_file.lower() not in ("", "none"):
+            inputs["mgrid_file"] = mgrid_file
+            inputs["extcur"] = extcur
+        elif lfreeb:
+            warnings.warn(
+                colored(
+                    "Free-boundary input without MGRID_FILE! DESC will run as "
+                    + "fixed-boundary.",
+                    "yellow",
+                )
+            )
 
         vmec_file.close()
 

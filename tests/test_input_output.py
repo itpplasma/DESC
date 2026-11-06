@@ -347,6 +347,31 @@ def test_vmec_input_profile_types(tmpdir_factory):
 
 
 @pytest.mark.unit
+def test_vmec_input_free_boundary(tmpdir_factory):
+    """MGRID_FILE and EXTCUR are kept unless LFREEB = F, VMEC's default being true."""
+    deck = """&INDATA
+  NFP = 1  MPOL = 4  NTOR = 0  PHIEDGE = 1.0{}
+  MGRID_FILE = 'mgrid_test.nc'  EXTCUR = 4700.0, 1000.0
+  AM = 1.0  AI = 0.5
+  RBC(0,0) = 10.0  RBC(0,1) = 1.0  ZBS(0,1) = 1.0
+/
+"""
+    folder = tmpdir_factory.mktemp("desc_inputs")
+    for lfreeb, expected in (
+        ("", True),
+        ("  LFREEB = T", True),
+        ("  LFREEB = F", False),
+    ):
+        path = folder.join("input.freeb")
+        path.write(deck.format(lfreeb))
+        ir = InputReader(cl_args=[str(path)])
+        assert (
+            ir.free_boundary
+            == {"mgrid_file": "mgrid_test.nc", "extcur": [4700.0, 1000.0]}
+        ) == expected
+
+
+@pytest.mark.unit
 def test_vmec_input_surface_threshold():
     """Test ."""
     path = ".//tests//inputs//input.QSC_r2_5.5_vmec"
