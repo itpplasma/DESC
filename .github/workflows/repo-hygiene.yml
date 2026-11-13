@@ -9,9 +9,9 @@ permissions:
   contents: read
 jobs:
   repo-hygiene:
-    uses: itpplasma/.github/.github/workflows/repo-hygiene.yml@1ff7888e17c39818bd5eb061ba6ff180afe918fa
+    uses: itpplasma/.github/.github/workflows/repo-hygiene.yml@82372f3b5251ea67a9d572828c94b6cc69d70024
     with:
-      hygiene-revision: 1ff7888e17c39818bd5eb061ba6ff180afe918fa
+      hygiene-revision: 82372f3b5251ea67a9d572828c94b6cc69d70024
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
