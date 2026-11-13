@@ -120,7 +120,8 @@ jobs:
             ./prof.db
 
       - name: Upload coverage
-        if: env.has_changes == 'true'
+        # the fork has no Codecov token
+        if: env.has_changes == 'true' && github.repository == 'PlasmaControl/DESC'
         id: codecov
         uses: codecov/codecov-action@v7
         with:
