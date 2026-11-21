@@ -124,9 +124,14 @@ def _solve_free_boundary(eq, free_boundary, input_path, verbose):
 def _free_boundary_problem(eq, field):
     """Objective and constraints that balance the pressures on the boundary.
 
-    With nonzero edge pressure the boundary carries a sheet current, without
-    which the pressure balance has no solution. Its net toroidal current stays
-    zero, so that the plasma current is the one of the input.
+    With nonzero edge pressure p(1) the balance B_vac^2/2mu_0 = p + B^2/2mu_0
+    has no solution without a surface current, so the boundary becomes a
+    FourierCurrentPotentialField sheet. Its net toroidal current I is fixed at
+    zero, so that the plasma current is the one of the input, while its net
+    poloidal current G and Phi_mn are free. This split of the jump between
+    toroidal and poloidal sheet current is a modelling choice the VMEC input
+    does not fix. Other codes split it differently and give a different
+    boundary.
     """
     import numpy as np
     from scipy.constants import mu_0
