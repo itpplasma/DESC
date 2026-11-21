@@ -19,6 +19,7 @@ from desc.magnetic_fields import (
     OmnigenousField,
     SplineMagneticField,
     ToroidalMagneticField,
+    VerticalMagneticField,
 )
 from desc.profiles import (
     PowerProfile,
@@ -388,6 +389,27 @@ def test_vmec_input_extcur_several_per_line(tmpdir_factory):
     np.testing.assert_array_equal(
         ir.free_boundary["extcur"], [-1370.985, -1609.154, 25.0, 7.0, 8.0]
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("p_edge", [0.0, 1.0e3])
+def test_free_boundary_sheet_current(p_edge):
+    """A nonzero edge pressure puts a sheet current on the free boundary."""
+    from desc.__main__ import _free_boundary_problem
+    from desc.objectives import FixSheetCurrent
+
+    pressure = PowerSeriesProfile([2.0e3, 0, p_edge - 2.0e3])
+    eq = Equilibrium(M=4, N=0, pressure=pressure, iota=PowerSeriesProfile([0.5]))
+    field = ToroidalMagneticField(B0=1.0, R0=10.0) + VerticalMagneticField(B0=0.1)
+
+    eq_fb, objective, constraints = _free_boundary_problem(eq, field)
+
+    sheet = p_edge > 0
+    assert not hasattr(eq.surface, "Phi_mn")
+    assert hasattr(eq_fb.surface, "Phi_mn") == sheet
+    assert objective.objectives[0]._sheet_current == sheet
+    assert any(isinstance(con, FixSheetCurrent) for con in constraints) != sheet
+    assert ("fixed sheet I" in [con.name for con in constraints]) == sheet
 
 
 @pytest.mark.unit

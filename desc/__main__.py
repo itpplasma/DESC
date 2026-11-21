@@ -105,25 +105,12 @@ def _solve_free_boundary(eq, free_boundary, input_path, verbose):
     import os
 
     from desc.magnetic_fields import SplineMagneticField
-    from desc.objectives import (
-        BoundaryError,
-        FixBoundaryR,
-        FixBoundaryZ,
-        ForceBalance,
-        ObjectiveFunction,
-        get_fixed_boundary_constraints,
-    )
 
     mgrid = free_boundary["mgrid_file"]
     if not os.path.isabs(mgrid):
         mgrid = os.path.join(os.path.dirname(os.path.abspath(input_path)), mgrid)
     field = SplineMagneticField.from_mgrid(mgrid, extcur=free_boundary.get("extcur"))
-    constraints = (ForceBalance(eq=eq),) + tuple(
-        con
-        for con in get_fixed_boundary_constraints(eq)
-        if not isinstance(con, (FixBoundaryR, FixBoundaryZ))
-    )
-    objective = ObjectiveFunction(BoundaryError(eq=eq, field=field, field_fixed=True))
+    eq, objective, constraints = _free_boundary_problem(eq, field)
     eq, _ = eq.optimize(
         objective,
         constraints,
@@ -132,6 +119,50 @@ def _solve_free_boundary(eq, free_boundary, input_path, verbose):
         copy=True,
     )
     return eq
+
+
+def _free_boundary_problem(eq, field):
+    """Objective and constraints that balance the pressures on the boundary.
+
+    With nonzero edge pressure the boundary carries a sheet current, without
+    which the pressure balance has no solution. Its net toroidal current stays
+    zero, so that the plasma current is the one of the input.
+    """
+    import numpy as np
+    from scipy.constants import mu_0
+
+    from desc.grid import LinearGrid
+    from desc.magnetic_fields import FourierCurrentPotentialField
+    from desc.objectives import (
+        BoundaryError,
+        FixBoundaryR,
+        FixBoundaryZ,
+        FixParameters,
+        FixSheetCurrent,
+        ForceBalance,
+        ObjectiveFunction,
+        get_fixed_boundary_constraints,
+    )
+
+    grid = LinearGrid(rho=1.0, M=eq.M_grid, N=eq.N_grid, NFP=eq.NFP)
+    edge_pressure = np.max(np.abs(eq.compute("p", grid=grid)["p"]))
+    sheet = mu_0 * edge_pressure > 1e-6  # BoundaryError's threshold for its warning
+    if sheet and not hasattr(eq.surface, "Phi_mn"):
+        eq = eq.copy()
+        eq.surface = FourierCurrentPotentialField.from_surface(
+            eq.surface, M_Phi=eq.M, N_Phi=eq.N
+        )
+    constraints = (ForceBalance(eq=eq),) + tuple(
+        con
+        for con in get_fixed_boundary_constraints(eq)
+        if not isinstance(con, (FixBoundaryR, FixBoundaryZ, FixSheetCurrent))
+    )
+    if sheet:
+        constraints += (FixParameters(eq, {"I": True}, name="fixed sheet I"),)
+    else:
+        constraints += (FixSheetCurrent(eq=eq),)
+    objective = ObjectiveFunction(BoundaryError(eq=eq, field=field, field_fixed=True))
+    return eq, objective, constraints
 
 
 if __name__ == "__main__":  # pragma: no cover

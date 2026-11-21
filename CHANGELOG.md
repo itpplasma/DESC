@@ -26,6 +26,7 @@ Bug Fixes
 - VMEC inputs with non-polynomial profiles (``two_power``, ``sum_atan``, splines, line segments and others), ``BLOAT`` or ``SPRES_PED`` are now converted to the profiles VMEC evaluates, as spline profiles. Previously the coefficients were read as a power series.
 - Free-boundary VMEC inputs keep ``MGRID_FILE`` and ``EXTCUR``, and the command line solves them in that field after the fixed-boundary solve. As in VMEC, an input without ``LFREEB`` is free-boundary when it names a grid.
 - VMEC inputs with several ``EXTCUR`` assignments on one line set each coil current. Before, the second current on such a line was replaced by its index.
+- Free-boundary VMEC inputs with nonzero edge pressure are solved with a sheet current on the boundary, without which the pressure balance has no solution. The sheet carries no net toroidal current.
 - The toroidal current converted from a VMEC input now has VMEC's sign. VMEC normalises the current to ``signgs * CURTOR``; for the usual left-handed VMEC boundary the converted equilibrium carried the opposite current.
 - Fixes bug in ``auglag`` optimizers which prevented them from accepting solver hyperparameters.
 - Fixes computation of ``CoilSetLinkingNumber`` to exclude coil writhe.
