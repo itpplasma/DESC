@@ -372,6 +372,25 @@ def test_vmec_input_free_boundary(tmpdir_factory):
 
 
 @pytest.mark.unit
+def test_vmec_input_extcur_several_per_line(tmpdir_factory):
+    """Each EXTCUR assignment on a line sets its own coil group."""
+    deck = """&INDATA
+  NFP = 1  MPOL = 4  NTOR = 0  PHIEDGE = 1.0
+  MGRID_FILE = 'mgrid_test.nc'
+  EXTCUR(01) = -1.370985E+03  EXTCUR(02) = -1.609154E+03
+  EXTCUR(3)=2.5E+01 EXTCUR(4) = 7.0, 8.0  AM = 1.0  AI = 0.5
+  RBC(0,0) = 10.0  RBC(0,1) = 1.0  ZBS(0,1) = 1.0
+/
+"""
+    path = tmpdir_factory.mktemp("desc_inputs").join("input.extcur")
+    path.write(deck)
+    ir = InputReader(cl_args=[str(path)])
+    np.testing.assert_array_equal(
+        ir.free_boundary["extcur"], [-1370.985, -1609.154, 25.0, 7.0, 8.0]
+    )
+
+
+@pytest.mark.unit
 def test_vmec_input_surface_threshold():
     """Test ."""
     path = ".//tests//inputs//input.QSC_r2_5.5_vmec"

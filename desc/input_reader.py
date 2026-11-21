@@ -1211,10 +1211,14 @@ class InputReader:
             )
             if match:
                 mgrid_file = match.group(1).strip()
-            match = re.search(
-                r"EXTCUR\s*(?:\(\s*(\d+)\s*\))?\s*=(.*)", command, re.IGNORECASE
-            )
-            if match:
+            # a line may hold several assignments, e.g. EXTCUR(1) = a  EXTCUR(2) = b,
+            # so each one's values end where the next assignment begins
+            for match in re.finditer(
+                r"EXTCUR\s*(?:\(\s*(\d+)\s*\))?\s*=(.*?)"
+                r"(?=[A-Za-z_]\w*\s*(?:\([^)]*\))?\s*=|$)",
+                command,
+                re.IGNORECASE,
+            ):
                 start = int(match.group(1)) - 1 if match.group(1) else 0
                 values = [
                     float(x)
